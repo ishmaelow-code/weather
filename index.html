@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accra Weather</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --card: #f4f5f7;
+    --text: #1b1f24;
+    --muted: #5d6673;
+    --accent: #c8111e;
+    --line: #e1e4e8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b;
+      --card: #1e2329;
+      --text: #f1f3f5;
+      --muted: #9aa4b0;
+      --line: #2b323a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: var(--accent);
+    color: #fff;
+    padding: 8px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: .5px; text-transform: uppercase; }
+  header span { font-size: 12px; opacity: .9; }
+
+  main { flex: 1; overflow-y: auto; padding: 12px; display: grid; gap: 12px; align-content: start; }
+
+  .now {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .now .icon { font-size: 52px; line-height: 1; }
+  .now .temp { font-size: 46px; font-weight: 700; line-height: 1; }
+  .now .cond { font-size: 15px; color: var(--muted); margin-top: 4px; }
+  .stats { margin-left: auto; display: grid; grid-template-columns: repeat(3, auto); gap: 4px 16px; font-size: 13px; }
+  .stats b { display: block; font-size: 15px; }
+  .stats small { color: var(--muted); }
+
+  h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+
+  .row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .hour, .day {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: center;
+    min-width: 64px;
+    flex: 1 0 auto;
+    font-size: 13px;
+  }
+  .hour .e, .day .e { font-size: 22px; margin: 4px 0; }
+  .hour small, .day small { color: var(--muted); display: block; }
+  .day .hi { font-weight: 700; }
+  .day .lo { color: var(--muted); }
+
+  .rain { color: #2a7de1; font-size: 12px; }
+  #status { color: var(--muted); font-size: 12px; text-align: center; padding: 4px 0 8px; }
+  .err { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Accra Weather</h1>
+  <span id="updated">Loading…</span>
+</header>
+
+<main>
+  <section class="now" id="now">
+    <div class="icon" id="icon">⏳</div>
+    <div>
+      <div class="temp" id="temp">--°C</div>
+      <div class="cond" id="cond">Loading…</div>
+    </div>
+    <div class="stats">
+      <div><small>Feels like</small><b id="feels">--</b></div>
+      <div><small>Humidity</small><b id="hum">--</b></div>
+      <div><small>Wind</small><b id="wind">--</b></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Next 12 hours</h2>
+    <div class="row" id="hours"></div>
+  </section>
+
+  <section>
+    <h2>7-day forecast</h2>
+    <div class="row" id="days"></div>
+  </section>
+
+  <div id="status">Data: Open-Meteo · refreshes every 15 minutes</div>
+</main>
+
+<script>
+  // Accra, Ghana
+  const LAT = 5.6037, LON = -0.1870;
+
+  const URL =
+    "https://api.open-meteo.com/v1/forecast" +
+    `?latitude=${LAT}&longitude=${LON}` +
+    "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day" +
+    "&hourly=temperature_2m,weather_code,precipitation_probability" +
+    "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+    "&timezone=Africa%2FAccra&forecast_days=7&wind_speed_unit=kmh";
+
+  // WMO weather codes -> [emoji, label]
+  const WMO = {
+    0: ["☀️", "Clear sky"], 1: ["🌤️", "Mainly clear"], 2: ["⛅", "Partly cloudy"], 3: ["☁️", "Overcast"],
+    45: ["🌫️", "Fog"], 48: ["🌫️", "Rime fog"],
+    51: ["🌦️", "Light drizzle"], 53: ["🌦️", "Drizzle"], 55: ["🌧️", "Heavy drizzle"],
+    61: ["🌧️", "Light rain"], 63: ["🌧️", "Rain"], 65: ["🌧️", "Heavy rain"],
+    80: ["🌦️", "Light showers"], 81: ["🌧️", "Showers"], 82: ["⛈️", "Violent showers"],
+    95: ["⛈️", "Thunderstorm"], 96: ["⛈️", "Thunderstorm, hail"], 99: ["⛈️", "Severe thunderstorm"]
+  };
+  const wmo = c => WMO[c] || ["🌡️", "Unknown"];
+  const $ = id => document.getElementById(id);
+  const fmtHour = iso => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const fmtDay = (iso, i) => i === 0 ? "Today" : new Date(iso + "T12:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric" });
+
+  async function load() {
+    try {
+      const r = await fetch(URL);
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+
+      // Current
+      const c = d.current, [ico, label] = wmo(c.weather_code);
+      $("icon").textContent = (c.is_day === 0 && c.weather_code <= 1) ? "🌙" : ico;
+      $("temp").textContent = Math.round(c.temperature_2m) + "°C";
+      $("cond").textContent = label;
+      $("feels").textContent = Math.round(c.apparent_temperature) + "°C";
+      $("hum").textContent = c.relative_humidity_2m + "%";
+      $("wind").textContent = Math.round(c.wind_speed_10m) + " km/h";
+
+      // Next 12 hours (from the current hour)
+      const h = d.hourly;
+      let start = h.time.findIndex(t => new Date(t) >= new Date(c.time));
+      if (start < 0) start = 0;
+      $("hours").innerHTML = h.time.slice(start, start + 12).map((t, i) => {
+        const k = start + i;
+        return `<div class="hour"><small>${fmtHour(t)}</small><div class="e">${wmo(h.weather_code[k])[0]}</div>
+                <b>${Math.round(h.temperature_2m[k])}°</b>
+                <span class="rain">💧${h.precipitation_probability[k] ?? 0}%</span></div>`;
+      }).join("");
+
+      // 7-day
+      const dy = d.daily;
+      $("days").innerHTML = dy.time.map((t, i) =>
+        `<div class="day"><small>${fmtDay(t, i)}</small><div class="e">${wmo(dy.weather_code[i])[0]}</div>
+         <span class="hi">${Math.round(dy.temperature_2m_max[i])}°</span> <span class="lo">${Math.round(dy.temperature_2m_min[i])}°</span>
+         <span class="rain" style="display:block">💧${dy.precipitation_probability_max[i] ?? 0}%</span></div>`
+      ).join("");
+
+      $("updated").textContent = "Updated " + fmtHour(new Date().toISOString());
+      $("status").textContent = "Data: Open-Meteo · refreshes every 15 minutes";
+      $("status").classList.remove("err");
+    } catch (e) {
+      $("status").textContent = "Could not load weather. Retrying…";
+      $("status").classList.add("err");
+    }
+  }
+
+  load();
+  setInterval(load, 15 * 60 * 1000);
+</script>
+</body>
+</html>
